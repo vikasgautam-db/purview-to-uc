@@ -7,6 +7,7 @@ class PurviewToUC:
     self.client = client
     self.regex = re.compile(r'<[^>]+>')
     self.execute = execute
+    self.sql_statements = []
 
   def remove_html(self, string):
     return self.regex.sub('', string) if (string != None) else ''
@@ -75,9 +76,16 @@ class PurviewToUC:
     arr = root.split("/")
     size = len(arr)
     return f"{arr[size-3]}.{arr[size-2]}"
+  
+  def add_to_sql_stmt(old_stmt: str, to_be_added: str) -> str:
+    if old_stmt == "":
+      return f"{to_be_added};\n"
+    else:
+      return f"{old_stmt}\n{to_be_added}\n"
 
   def parse_tables(self, table_dump, classifcation_map):
     table_def = {}
+    result_stmt = []
     table = table_dump['entities'][0]
 
     if (table['typeName'] == 'azure_synapse_dedicated_sql_table'):
@@ -95,34 +103,41 @@ class PurviewToUC:
         for label in labels:
           tags = tags + f"'{label}',"
         tags = tags.rstrip(",")
-        add_label_stmt = f"ALTER TABLE {catalog_schema}.{table_def['table']} SET TAGS ({tags})"
+        add_label_stmt = f"ALTER TABLE {catalog_schema}.{table_def['table']} SET TAGS ({tags});"
 
-        if (self.execute == "execute statements"):
-          spark.sql(add_label_stmt)
-        print(f"{add_label_stmt}")
+        result_stmt.append(add_label_stmt)
+        #if (self.execute == "execute statements"):
+          #spark.sql(add_label_stmt)
+        #print(f"{add_label_stmt}")
 
       # process table classifications
       cfns = table_dump['entities'][0]['classifications']
+      num_classification = 0
       for cfn in cfns:
         if (cfn['typeName'] == "MICROSOFT.POWERBI.ENDORSEMENT"):
-          stmt = f"ALTER TABLE {catalog_schema}.{table_def['table']} SET TAGS ('{cfn['attributes']['endorsement']}')"
-          print(f"{stmt}")
-          if (self.execute == "execute statements"):
-            spark.sql(stmt)
+          stmt = f"ALTER TABLE {catalog_schema}.{table_def['table']} SET TAGS ('{cfn['attributes']['endorsement']}');"
+          result_stmt.append(stmt)
+          # print(f"{stmt}")
+          # if (self.execute == "execute statements"):
+          #   spark.sql(stmt)
         else:
+          num_classification = num_classification + 1
           tech_classification = cfn['typeName']
           readable_classification = self.sanitize_tags(classifcation_map[tech_classification])
-          stmt = f"ALTER TABLE {catalog_schema}.{table_def['table']} SET TAGS ('Classification' = '{readable_classification}')"
-          print(f"{stmt}")
-          if (self.execute == "execute statements"):
-            spark.sql(stmt)
+          if(num_classification > 1):
+            stmt = f"ALTER TABLE {catalog_schema}.{table_def['table']} SET TAGS ('classification' = '{readable_classification}');"
+            result_stmt.append(stmt)
+          # print(f"{stmt}")
+          # if (self.execute == "execute statements"):
+          #   spark.sql(stmt)
 
       # process table comments
       description = table['attributes']['userDescription']
       add_description_stmt = f"""COMMENT ON TABLE {catalog_schema}.{table_def['table']} IS "{self.remove_html(description)}";"""
-      if (self.execute == "execute statements"):
-        spark.sql(add_description_stmt)
-      print(f"{add_description_stmt}")
+      result_stmt.append(add_description_stmt)
+      # if (self.execute == "execute statements"):
+      #   spark.sql(add_description_stmt)
+      # print(f"{add_description_stmt}")
 
       # process columns
       columns = table['relationshipAttributes']['columns']
@@ -163,6 +178,17 @@ class PurviewToUC:
 
     result = stmt[:-2] + ");"
     return result
+  
+  def handle_multiple_classifications(self, classifications, classifcation_map):
+    cfn_string = ""
+    for cfn in classifications:
+      readable_classification = self.sanitize_tags(classifcation_map[cfn])
+      if(cfn_string == ""):
+        cfn_string = f"{readable_classification}"
+      else:
+        cfn_string = cfn_string + ", " + f"{readable_classification}"
+    
+    return f"'classification' = '{cfn_string}'"
 
   def parse_database(self, database_dump, classifcation_map):
     # get database name
@@ -176,34 +202,29 @@ class PurviewToUC:
       for label in labels:
         tags = tags + f"'{label}',"
       tags = tags.rstrip(",")
-      add_label_stmt = f"ALTER CATALOG {name} SET TAGS ({tags})"
-
-    print(f"{add_label_stmt}")
-    if (self.execute == "execute statements"):
-      spark.sql(add_label_stmt)
+      add_label_stmt = f"ALTER CATALOG {name} SET TAGS ({tags});"
+      self.sql_statements.append(add_label_stmt)
 
     # get descriptions
     add_description_stmt = f"COMMENT ON CATALOG {name} IS '{self.remove_html(description)}';"
-    print(f"{add_description_stmt}")
-    if (self.execute == "execute statements"):
-      spark.sql(add_description_stmt)
+    self.sql_statements.append(add_description_stmt)
 
     # get classifications
     cfication = database_dump['entities'][0]['classifications']
+    classifications_found = []
     for c in cfication:
       if (c['typeName'] == "MICROSOFT.POWERBI.ENDORSEMENT"):
-        stmt = f"ALTER CATALOG {name} SET TAGS ('{c['attributes']['endorsement']}')"
-        print(f"{stmt}")
-        if (self.execute == "execute statements"):
-          spark.sql(stmt)
+        stmt = f"ALTER CATALOG {name} SET TAGS ('{c['attributes']['endorsement']}');"
+        self.sql_statements.append(stmt)
       else:
-        tech_classification = c['typeName']
-        readable_classification = self.sanitize_tags(classifcation_map[tech_classification])
-        stmt = f"ALTER CATALOG {name} SET TAGS ('classification' = '{readable_classification}')"
-        print(f"{stmt}")
-        if (self.execute == "execute statements"):
-          spark.sql(stmt)
+        classifications_found.append(c['typeName'])
 
+    self.sql_statements.append(f"ALTER CATALOG {name} SET TAGS ({self.handle_multiple_classifications(classifications_found, classifcation_map)})")        
+
+        # readable_classification = self.sanitize_tags(classifcation_map[tech_classification])
+        # stmt = f"ALTER CATALOG {name} SET TAGS ('classification' = '{readable_classification}')"
+        # self.sql_statements.append(stmt)
+  
   def parse_schema(self, schema_dump, classifcation_map):
     # get schama name
     name = schema_dump['entities'][0]['attributes']['name']
@@ -215,14 +236,14 @@ class PurviewToUC:
     cfication = schema_dump['entities'][0]['classifications']
     for c in cfication:
       if (c['typeName'] == "MICROSOFT.POWERBI.ENDORSEMENT"):
-        stmt = f"ALTER SCHEMA {db}.{name} SET TAGS ('{c['attributes']['endorsement']}')"
+        stmt = f"ALTER SCHEMA {db}.{name} SET TAGS ('{c['attributes']['endorsement']}');"
         if (self.execute == "execute statements"):
           spark.sql(stmt)
         print(f"{stmt}")
       else:
         tech_classification = c['typeName']
         readable_classification = self.sanitize_tags(classifcation_map[tech_classification])
-        stmt = f"ALTER SCHEMA {db}.{name} SET TAGS ('classification' = '{readable_classification}')"
+        stmt = f"ALTER SCHEMA {db}.{name} SET TAGS ('classification' = '{readable_classification}');"
         if (self.execute == "execute statements"):
           spark.sql(stmt)
         print(f"{stmt}")
@@ -265,4 +286,13 @@ class PurviewToUC:
                       guid=page['id'], qualifiedName=page['qualifiedName'], typeName=page['entityType'])
                   self.parse_tables(gen, classifcation_map)
               else:
-                  print("Unsupported Entity Type found !")
+                  print(f"Unsupported Entity Type found --> {page['entityType']}")
+
+      
+      if(self.execute == "execute statements"):
+        for stmt in self.sql_statements:
+          print(stmt)
+          spark.sql(stmt)
+      else:
+        final_stmt = '\n'.join(self.sql_statements)
+        print(final_stmt) 
