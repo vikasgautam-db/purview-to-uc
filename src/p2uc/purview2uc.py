@@ -34,6 +34,9 @@ class PurviewToUC:
       s = re.sub(r"\s+", '_', s)
 
       return s
+  
+  def sanitize_tags(self, s:str) -> str:
+    return s.replace("'", r"\'")
 
   def add_column_tags(self, table_def, classifcation_map, catalog_schema):
     table_name = table_def['table']
@@ -48,11 +51,10 @@ class PurviewToUC:
           if (tech_classification == "MICROSOFT.POWERBI.ENDORSEMENT"):
             result = stmt + f"{column_name} SET TAGS ('Certified');"
           else:
-            classification = self.sanitize_classification(
-                classifcation_map[tech_classification])
+            classification = self.sanitize_tags(classifcation_map[tech_classification])
             result = stmt + \
-                f"{column_name} SET TAGS ('classification_{classification}');"
-          print(f"{result}")
+                f"{column_name} SET TAGS ('Classification' = '{classification}');"
+          print(result)
           if (self.execute == "execute statements"):
             spark.sql(result)
 
@@ -109,9 +111,8 @@ class PurviewToUC:
             spark.sql(stmt)
         else:
           tech_classification = cfn['typeName']
-          readable_classification = self.sanitize_classification(
-              classifcation_map[tech_classification])
-          stmt = f"ALTER TABLE {catalog_schema}.{table_def['table']} SET TAGS ('classification_{readable_classification}')"
+          readable_classification = self.sanitize_tags(classifcation_map[tech_classification])
+          stmt = f"ALTER TABLE {catalog_schema}.{table_def['table']} SET TAGS ('Classification' = '{readable_classification}')"
           print(f"{stmt}")
           if (self.execute == "execute statements"):
             spark.sql(stmt)
@@ -197,9 +198,8 @@ class PurviewToUC:
           spark.sql(stmt)
       else:
         tech_classification = c['typeName']
-        readable_classification = self.sanitize_classification(
-            classifcation_map[tech_classification])
-        stmt = f"ALTER CATALOG {name} SET TAGS ('classification_{readable_classification}')"
+        readable_classification = self.sanitize_tags(classifcation_map[tech_classification])
+        stmt = f"ALTER CATALOG {name} SET TAGS ('classification' = '{readable_classification}')"
         print(f"{stmt}")
         if (self.execute == "execute statements"):
           spark.sql(stmt)
@@ -221,9 +221,8 @@ class PurviewToUC:
         print(f"{stmt}")
       else:
         tech_classification = c['typeName']
-        readable_classification = self.sanitize_classification(
-            classifcation_map[tech_classification])
-        stmt = f"ALTER SCHEMA {db}.{name} SET TAGS ('classification_{readable_classification}')"
+        readable_classification = self.sanitize_tags(classifcation_map[tech_classification])
+        stmt = f"ALTER SCHEMA {db}.{name} SET TAGS ('classification' = '{readable_classification}')"
         if (self.execute == "execute statements"):
           spark.sql(stmt)
         print(f"{stmt}")
