@@ -5,7 +5,7 @@ with open("README.md", "r") as f:
 
 setup(
     name="p2uc",
-    version="0.0.3",
+    version="0.0.4",
     description="Import metadata from Azure Purview into Databricks Unity Catalog",
     package_dir={"": "src"},
     packages=find_packages(where="src"),
