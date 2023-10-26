@@ -43,8 +43,9 @@ class PurviewToUC:
     table_name = table_def['table']
     stmt = f'ALTER TABLE {catalog_schema}.{table_name} ALTER COLUMN '
     columns = table_def['columns']
-    classifications_found = []
+    
     for column in columns:
+      classifications_found = []
       column_name = column['column_name']
       cfn_list = column['classification']
       if (len(cfn_list) > 0):
@@ -75,7 +76,6 @@ class PurviewToUC:
 
   def parse_tables(self, table_dump, classifcation_map):
     table_def = {}
-    result_stmt = []
     table = table_dump['entities'][0]
 
     if (table['typeName'] == 'azure_synapse_dedicated_sql_table'):
@@ -95,7 +95,7 @@ class PurviewToUC:
         tags = tags.rstrip(",")
         add_label_stmt = f"ALTER TABLE {catalog_schema}.{table_def['table']} SET TAGS ({tags});"
 
-        result_stmt.append(add_label_stmt)
+        self.sql_statements.append(add_label_stmt)
 
       # process table classifications
       cfns = table_dump['entities'][0]['classifications']
@@ -103,7 +103,7 @@ class PurviewToUC:
       for cfn in cfns:
         if (cfn['typeName'] == "MICROSOFT.POWERBI.ENDORSEMENT"):
           stmt = f"ALTER TABLE {catalog_schema}.{table_def['table']} SET TAGS ('{cfn['attributes']['endorsement']}');"
-          result_stmt.append(stmt)
+          self.sql_statements.append(stmt)
         else:
           classifications_found.append(cfn['typeName'])
       
@@ -112,7 +112,7 @@ class PurviewToUC:
       # process table comments
       description = table['attributes']['userDescription']
       add_description_stmt = f"""COMMENT ON TABLE {catalog_schema}.{table_def['table']} IS "{self.remove_html(description)}";"""
-      result_stmt.append(add_description_stmt)
+      self.sql_statements.append(add_description_stmt)
 
       # process columns
       columns = table['relationshipAttributes']['columns']
